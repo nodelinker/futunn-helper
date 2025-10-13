@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     concurrency: release
     # Only run on the original repo, not on forks
-    if: github.repository_owner == 'karlorz'  # TODO: Change to your GitHub username
+    if: github.repository_owner == 'karlorz'
     
     environment:
       name: pypi
@@ -30,13 +30,13 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup UV
+      - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
-      - name: Install Python
-        run: uv python install 3.11
+      - name: Install Python 3.13
+        run: uv python install 3.13
 
       - name: Install dependencies
         run: uv sync --all-extras --dev
@@ -48,6 +48,15 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           git_committer_name: "github-actions[bot]"
           git_committer_email: "github-actions[bot]@users.noreply.github.com"
+
+      - name: Build package with uv
+        if: steps.release.outputs.released == 'true'
+        run: uv build
+
+      - name: Check package metadata
+        if: steps.release.outputs.released == 'true'
+        run: |
+          uv run --isolated --no-project --with twine twine check dist/*
 
       - name: Publish to PyPI (Trusted Publishing)
         if: steps.release.outputs.released == 'true'
