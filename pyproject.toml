@@ -25,10 +25,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/futunn-helper"
-Documentation = "https://github.com/yourusername/futunn-helper/blob/main/AGENTS.md"
-Repository = "https://github.com/yourusername/futunn-helper"
-Issues = "https://github.com/yourusername/futunn-helper/issues"
+Homepage = "https://github.com/karlorz/futunn-helper"
+Documentation = "https://github.com/karlorz/futunn-helper/blob/main/README.md"
+Repository = "https://github.com/karlorz/futunn-helper"
+Issues = "https://github.com/karlorz/futunn-helper/issues"
 
 [build-system]
 requires = ["hatchling"]

@@ -17,7 +17,7 @@ setup(
     description="Asynchronous Python client for Futunn stock market quote API",
     long_description=read("README.md") if os.path.exists("README.md") else "",
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/futunn-helper",
+    url="https://github.com/karlorz/futunn-helper",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -50,8 +50,8 @@ setup(
     },
     keywords="futunn stock market api async httpx finance trading",
     project_urls={
-        "Bug Reports": "https://github.com/yourusername/futunn-helper/issues",
-        "Source": "https://github.com/yourusername/futunn-helper",
-        "Documentation": "https://github.com/yourusername/futunn-helper/blob/main/AGENTS.md",
+        "Bug Reports": "https://github.com/karlorz/futunn-helper/issues",
+        "Source": "https://github.com/karlorz/futunn-helper",
+        "Documentation": "https://github.com/karlorz/futunn-helper/blob/main/README.md",
     },
 )

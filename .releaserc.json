@@ -1,6 +1,6 @@
 {
   "branches": ["main"],
-  "repositoryUrl": "https://github.com/yourusername/futunn-helper",
+  "repositoryUrl": "https://github.com/karlorz/futunn-helper",
   "plugins": [
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",

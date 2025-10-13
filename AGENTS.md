@@ -24,7 +24,7 @@ This is a **Futunn API Client** library inspired by the architecture of `py-goog
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/futunn-helper.git
+git clone https://github.com/karlorz/futunn-helper.git
 cd futunn-helper
 
 # Install UV (if missing) and sync project deps
@@ -668,7 +668,7 @@ This project uses **OpenID Connect (OIDC) Trusted Publishing** for secure, autom
 **1. Configure PyPI:**
 - Visit: https://pypi.org/manage/project/futunn-helper/settings/publishing/
 - Add trusted publisher:
-  - **Owner**: `yourusername`
+  - **Owner**: `karlorz`
   - **Repository**: `futunn-helper`
   - **Workflow**: `release.yml`
   - **Environment**: `pypi`
