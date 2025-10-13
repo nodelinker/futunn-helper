@@ -1,6 +1,6 @@
 [project]
 name = "futunn-helper"
-version = "1.0.0"
+version = "2.0.0"
 description = "Asynchronous Python client for Futunn stock market quote API, inspired by py-googletrans"
 readme = "README.md"
 requires-python = ">=3.11"
