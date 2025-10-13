@@ -16,6 +16,8 @@ jobs:
     name: Semantic Release
     runs-on: ubuntu-latest
     concurrency: release
+    # Only run on the original repo, not on forks
+    if: github.repository_owner == 'karlorz'  # TODO: Change to your GitHub username
     
     environment:
       name: pypi

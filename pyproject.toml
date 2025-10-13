@@ -2,7 +2,7 @@
 name = "futunn-helper"
 version = "0.1.0"
 description = "Asynchronous Python client for Futunn stock market quote API, inspired by py-googletrans"
-readme = "AGENTS.md"
+readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 keywords = ["futunn", "stock", "market", "api", "async", "httpx", "finance", "trading"]
