@@ -7,18 +7,19 @@ Inspired by the Translator class from py-googletrans.
 
 import asyncio
 import logging
-from typing import List, Optional, Dict
+from collections.abc import Mapping
+
 import httpx
 
-from futunn import urls, constants
-from futunn.token import TokenManager
-from futunn.models import StockList, IndexQuote
+from futunn import constants, urls
 from futunn.exceptions import (
     FutunnAPIError,
-    TokenExpiredError,
-    RateLimitError,
     InvalidResponseError,
+    RateLimitError,
+    TokenExpiredError,
 )
+from futunn.models import StockList
+from futunn.token import TokenManager
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class FutunnClient:
 
     def __init__(
         self,
-        proxies: Optional[Dict[str, str]] = None,
+        proxies: str | Mapping[str, str] | None = None,
         timeout: int = constants.DEFAULT_TIMEOUT,
         concurrency_limit: int = constants.DEFAULT_CONCURRENCY_LIMIT,
     ):
@@ -54,12 +55,38 @@ class FutunnClient:
             timeout: Request timeout in seconds (default: 10)
             concurrency_limit: Maximum concurrent requests (default: 5)
         """
-        self.client = httpx.AsyncClient(
-            http2=True,
-            proxies=proxies,
-            timeout=timeout,
-            follow_redirects=True,
-        )
+        client_kwargs = {
+            "http2": True,
+            "timeout": timeout,
+            "follow_redirects": True,
+        }
+
+        self.client = None  # type: ignore[assignment]
+
+        if proxies:
+            proxy_value: str | Mapping[str, str] | None = proxies
+            if isinstance(proxies, Mapping):
+                proxy_value = (
+                    proxies.get("all")
+                    or proxies.get("https")
+                    or proxies.get("http")
+                    or None
+                )
+
+            if proxy_value is not None:
+                try:
+                    self.client = httpx.AsyncClient(proxy=proxy_value, **client_kwargs)
+                except TypeError:
+                    self.client = None
+
+            if self.client is None:
+                try:
+                    self.client = httpx.AsyncClient(proxies=proxies, **client_kwargs)
+                except TypeError as exc:  # pragma: no cover - defensive
+                    raise ValueError("Unsupported proxy configuration for current httpx version") from exc
+
+        if self.client is None:
+            self.client = httpx.AsyncClient(**client_kwargs)
         self.token_manager = TokenManager(self.client)
         self.concurrency_limit = concurrency_limit
         self._semaphore = asyncio.Semaphore(concurrency_limit)
@@ -78,7 +105,7 @@ class FutunnClient:
 
     async def get_stock_list(
         self,
-        market_type: int = constants.MARKET_TYPE_US,
+        market_type: int | str | constants.MarketInfo = constants.MARKET_TYPE_US,
         plate_type: int = constants.PLATE_TYPE_ALL,
         rank_type: int = constants.RANK_TYPE_TOP_TURNOVER,
         page: int = 0,
@@ -88,7 +115,7 @@ class FutunnClient:
         Fetch a paginated list of stocks.
 
         Args:
-            market_type: Market type (2=US, 1=HK, 3=CN)
+            market_type: Market identifier (see ``futunn.constants.MARKETS``)
             plate_type: Plate type (1=all stocks)
             rank_type: Ranking type (5=turnover, 1=gainers, 2=losers)
             page: Page number (0-indexed)
@@ -107,8 +134,10 @@ class FutunnClient:
             >>> stocks = await client.get_stock_list(market_type=2, page_size=10)
             >>> print(f"Total: {stocks.pagination.total} stocks")
         """
+        resolved_market_type = constants.resolve_market_type(market_type)
+
         params = {
-            "marketType": market_type,
+            "marketType": resolved_market_type,
             "plateType": plate_type,
             "rankType": rank_type,
             "page": page,
@@ -116,7 +145,7 @@ class FutunnClient:
         }
 
         try:
-            data = await self._make_request(urls.GET_STOCK_LIST, params)
+            data = await self._make_request(urls.GET_STOCK_LIST, params=params)
             return StockList.from_dict(data)
 
         except InvalidResponseError as e:
@@ -125,17 +154,17 @@ class FutunnClient:
 
     async def get_multiple_pages(
         self,
-        pages: List[int],
-        market_type: int = constants.MARKET_TYPE_US,
+        pages: list[int],
+        market_type: int | str | constants.MarketInfo = constants.MARKET_TYPE_US,
         rank_type: int = constants.RANK_TYPE_TOP_TURNOVER,
         page_size: int = constants.DEFAULT_PAGE_SIZE,
-    ) -> List[StockList]:
+    ) -> list[StockList]:
         """
         Fetch multiple pages concurrently with rate limiting.
 
         Args:
             pages: List of page numbers to fetch
-            market_type: Market type (2=US, 1=HK, 3=CN)
+            market_type: Market identifier (see ``futunn.constants.MARKETS``)
             rank_type: Ranking type (5=turnover, 1=gainers, 2=losers)
             page_size: Number of stocks per page
 
@@ -148,30 +177,31 @@ class FutunnClient:
             >>> total_stocks = sum(len(result.stocks) for result in results)
         """
 
+        resolved_market_type = constants.resolve_market_type(market_type)
+
         async def fetch_with_semaphore(page: int) -> StockList:
             async with self._semaphore:
                 return await self.get_stock_list(
-                    market_type=market_type,
+                    market_type=resolved_market_type,
                     rank_type=rank_type,
                     page=page,
                     page_size=page_size,
                 )
-
         tasks = [fetch_with_semaphore(page) for page in pages]
         results = await asyncio.gather(*tasks)
         return results
 
     async def get_all_stocks(
         self,
-        market_type: int = constants.MARKET_TYPE_US,
+        market_type: int | str | constants.MarketInfo = constants.MARKET_TYPE_US,
         rank_type: int = constants.RANK_TYPE_TOP_TURNOVER,
-        max_pages: Optional[int] = None,
-    ) -> List[StockList]:
+        max_pages: int | None = None,
+    ) -> list[StockList]:
         """
         Fetch all available stocks (or up to max_pages).
 
         Args:
-            market_type: Market type (2=US, 1=HK, 3=CN)
+            market_type: Market identifier (see ``futunn.constants.MARKETS``)
             rank_type: Ranking type (5=turnover, 1=gainers, 2=losers)
             max_pages: Maximum number of pages to fetch (None = all pages)
 
@@ -183,8 +213,10 @@ class FutunnClient:
             >>> results = await client.get_all_stocks(max_pages=10)
         """
         # First, fetch page 0 to get total page count
+        resolved_market_type = constants.resolve_market_type(market_type)
+
         first_page = await self.get_stock_list(
-            market_type=market_type, rank_type=rank_type, page=0
+            market_type=resolved_market_type, rank_type=rank_type, page=0
         )
 
         total_pages = first_page.pagination.page_count
@@ -197,20 +229,23 @@ class FutunnClient:
         if total_pages > 1:
             remaining_pages = list(range(1, total_pages))
             remaining_results = await self.get_multiple_pages(
-                remaining_pages, market_type=market_type, rank_type=rank_type
+                remaining_pages,
+                market_type=resolved_market_type,
+                rank_type=rank_type,
             )
             return [first_page] + remaining_results
         else:
             return [first_page]
 
     async def get_index_quote(
-        self, market_type: int = constants.MARKET_TYPE_US
-    ) -> Dict:
+        self,
+        market_type: int | str | constants.MarketInfo = constants.MARKET_TYPE_US,
+    ) -> dict:
         """
         Get market index quote data.
 
         Args:
-            market_type: Market type (2=US, 1=HK, 3=CN)
+            market_type: Market identifier (see ``futunn.constants.MARKETS``)
 
         Returns:
             Dictionary containing index quote data
@@ -219,12 +254,17 @@ class FutunnClient:
             >>> client = FutunnClient()
             >>> index_data = await client.get_index_quote(market_type=2)
         """
-        params = {"marketType": market_type}
-        return await self._make_request(urls.GET_INDEX_QUOTE, params)
+        params = {"marketType": constants.resolve_market_type(market_type)}
+        return await self._make_request(urls.GET_INDEX_QUOTE, params=params)
 
     async def _make_request(
-        self, url: str, params: Dict, retry_on_token_error: bool = True
-    ) -> Dict:
+        self,
+        url: str,
+        *,
+        params: dict | None = None,
+        data: dict | None = None,
+        retry_on_token_error: bool = True,
+    ) -> dict:
         """
         Make an authenticated API request.
 
@@ -242,7 +282,7 @@ class FutunnClient:
             RateLimitError: On rate limit errors
         """
         # Get authentication headers
-        headers = await self.token_manager.get_tokens()
+        headers = await self.token_manager.get_headers(params=params, data=data)
 
         try:
             logger.debug(f"Making request to {url} with params {params}")
@@ -265,7 +305,9 @@ class FutunnClient:
                 if retry_on_token_error:
                     logger.warning("Token expired, refreshing and retrying")
                     await self.token_manager.refresh_tokens()
-                    return await self._make_request(url, params, retry_on_token_error=False)
+                    return await self._make_request(
+                        url, params=params, data=data, retry_on_token_error=False
+                    )
                 else:
                     raise TokenExpiredError("Authentication failed after retry")
 

@@ -5,7 +5,6 @@ Uses dataclasses for type safety and clean serialization.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 
 @dataclass
@@ -27,24 +26,24 @@ class Stock:
     circulation_market_value: str
     total_shares: str
     circulation_total_shares: str
-    c_5days: Optional[str] = None
-    c_5days_price_direct: Optional[str] = None
-    c_10days: Optional[str] = None
-    c_10days_price_direct: Optional[str] = None
-    c_20days: Optional[str] = None
-    c_20days_price_direct: Optional[str] = None
-    c_60days: Optional[str] = None
-    c_60days_price_direct: Optional[str] = None
-    c_120days: Optional[str] = None
-    c_120days_price_direct: Optional[str] = None
-    c_250days: Optional[str] = None
-    c_250days_price_direct: Optional[str] = None
-    c_year_days: Optional[str] = None
-    c_year_days_price_direct: Optional[str] = None
-    trade_changeraio: Optional[str] = None
-    price_amplitude: Optional[str] = None
-    volumn_ratio: Optional[str] = None
-    buysell_ratio: Optional[str] = None
+    c_5days: str | None = None
+    c_5days_price_direct: str | None = None
+    c_10days: str | None = None
+    c_10days_price_direct: str | None = None
+    c_20days: str | None = None
+    c_20days_price_direct: str | None = None
+    c_60days: str | None = None
+    c_60days_price_direct: str | None = None
+    c_120days: str | None = None
+    c_120days_price_direct: str | None = None
+    c_250days: str | None = None
+    c_250days_price_direct: str | None = None
+    c_year_days: str | None = None
+    c_year_days_price_direct: str | None = None
+    trade_changeraio: str | None = None
+    price_amplitude: str | None = None
+    volumn_ratio: str | None = None
+    buysell_ratio: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "Stock":
@@ -123,7 +122,7 @@ class StockList:
     """Represents a paginated list of stocks from the API"""
 
     pagination: Pagination
-    stocks: List[Stock]
+    stocks: list[Stock]
     code: int = 0
     message: str = ""
 

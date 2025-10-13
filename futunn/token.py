@@ -5,12 +5,16 @@ Handles acquisition and management of authentication tokens required for API req
 Inspired by TokenAcquirer from py-googletrans.
 """
 
+import hashlib
+import hmac
+import json
 import logging
 import re
-from typing import Optional, Dict
+from typing import Any
+
 import httpx
 
-from futunn import urls, constants
+from futunn import constants, urls
 from futunn.exceptions import TokenExpiredError
 
 logger = logging.getLogger(__name__)
@@ -31,11 +35,14 @@ class TokenManager:
             client: httpx.AsyncClient instance to use for requests
         """
         self.client = client
-        self.csrf_token: Optional[str] = None
-        self.quote_token: Optional[str] = None
-        self._headers_cache: Optional[Dict[str, str]] = None
+        self.csrf_token: str | None = None
 
-    async def get_tokens(self) -> Dict[str, str]:
+    async def get_headers(
+        self,
+        *,
+        params: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
         """
         Get authentication tokens, fetching new ones if necessary.
 
@@ -45,10 +52,17 @@ class TokenManager:
         Raises:
             TokenExpiredError: If unable to fetch tokens
         """
-        if self.csrf_token is None or self.quote_token is None:
+        if self.csrf_token is None:
             await self._fetch_tokens()
 
-        return self._build_headers()
+        csrf_token = self._read_csrf_cookie()
+        if not csrf_token:
+            raise TokenExpiredError("Missing csrfToken cookie")
+
+        payload = self._select_payload(params=params, data=data)
+        quote_token = self._build_quote_token(payload)
+
+        return self._build_headers(csrf_token=csrf_token, quote_token=quote_token)
 
     async def _fetch_tokens(self) -> None:
         """
@@ -75,23 +89,15 @@ class TokenManager:
                     f"Failed to fetch tokens: HTTP {response.status_code}"
                 )
 
-            # Extract tokens from cookies
-            cookies = response.cookies
-            self.csrf_token = self._extract_csrf_token(response, cookies)
-            self.quote_token = self._extract_quote_token(response, cookies)
+            self.csrf_token = self._extract_csrf_token(response, response.cookies)
 
-            logger.info(
-                f"Successfully fetched tokens: csrf={bool(self.csrf_token)}, "
-                f"quote={bool(self.quote_token)}"
-            )
+            logger.info("Successfully fetched csrf token")
 
         except httpx.RequestError as e:
             logger.error(f"Network error while fetching tokens: {e}")
             raise TokenExpiredError(f"Network error: {e}")
 
-    def _extract_csrf_token(
-        self, response: httpx.Response, cookies: httpx.Cookies
-    ) -> str:
+    def _extract_csrf_token(self, response: httpx.Response, cookies: httpx.Cookies) -> str:
         """
         Extract CSRF token from response.
 
@@ -102,6 +108,10 @@ class TokenManager:
         Returns:
             CSRF token string
         """
+        csrf_cookie = cookies.get("csrfToken")
+        if csrf_cookie:
+            return csrf_cookie
+
         # Try to find token in response headers
         csrf_token = response.headers.get("x-csrf-token")
         if csrf_token:
@@ -113,34 +123,9 @@ class TokenManager:
         if match:
             return match.group(1)
 
-        # Fallback: generate a simple token (this might need adjustment based on actual requirements)
-        logger.warning("Could not extract CSRF token, using fallback")
-        return "iwtmChEzi0ixw18P983l5ai7"  # From observed network traffic
+        raise TokenExpiredError("Unable to extract CSRF token from Futunn page")
 
-    def _extract_quote_token(
-        self, response: httpx.Response, cookies: httpx.Cookies
-    ) -> str:
-        """
-        Extract quote token from response.
-
-        Args:
-            response: HTTP response object
-            cookies: Cookies from response
-
-        Returns:
-            Quote token string
-        """
-        # Try to find in response content
-        content = response.text
-        match = re.search(r'quote[_-]?token["\']\s*[:=]\s*["\']([^"\']+)["\']', content)
-        if match:
-            return match.group(1)
-
-        # Fallback: generate a simple token
-        logger.warning("Could not extract quote token, using fallback")
-        return "99227e34c9"  # From observed network traffic
-
-    def _build_headers(self) -> Dict[str, str]:
+    def _build_headers(self, *, csrf_token: str, quote_token: str) -> dict[str, str]:
         """
         Build request headers with authentication tokens.
 
@@ -148,14 +133,14 @@ class TokenManager:
             Dictionary of headers
         """
         return {
-            "futu-x-csrf-token": self.csrf_token or "",
-            "quote-token": self.quote_token or "",
+            "futu-x-csrf-token": csrf_token,
+            "quote-token": quote_token,
             "referer": urls.STOCK_LIST_PAGE,
             "user-agent": constants.DEFAULT_USER_AGENT,
             "accept": "application/json, text/plain, */*",
         }
 
-    async def refresh_tokens(self) -> Dict[str, str]:
+    async def refresh_tokens(self) -> dict[str, str]:
         """
         Force refresh of authentication tokens.
 
@@ -164,12 +149,62 @@ class TokenManager:
         """
         logger.info("Refreshing authentication tokens")
         self.csrf_token = None
-        self.quote_token = None
-        return await self.get_tokens()
+        return await self.get_headers()
 
     def invalidate(self) -> None:
         """Invalidate cached tokens, forcing refresh on next request"""
         logger.info("Invalidating cached tokens")
         self.csrf_token = None
-        self.quote_token = None
-        self._headers_cache = None
+        self.client.cookies.clear()
+
+    def _read_csrf_cookie(self) -> str | None:
+        cookie = self.client.cookies.get("csrfToken", domain="www.futunn.com")
+        if cookie is None:
+            cookie = self.client.cookies.get("csrfToken")
+        return cookie or self.csrf_token
+
+    @staticmethod
+    def _select_payload(
+        *, params: dict[str, Any] | None, data: dict[str, Any] | None
+    ) -> str:
+        if data:
+            payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+        elif params:
+            payload = TokenManager._stringify_params(params)
+        else:
+            payload = "{}"
+
+        payload = payload or "quote"
+        return payload
+
+    @staticmethod
+    def _stringify_params(params: dict[str, Any]) -> str:
+        serialized: dict[str, str] = {}
+        for key, value in params.items():
+            if value is None:
+                continue
+            serialized[key] = TokenManager._js_string(value)
+        return json.dumps(serialized, separators=(",", ":"), ensure_ascii=False)
+
+    @staticmethod
+    def _js_string(value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if value is None:
+            return "null"
+        return str(value)
+
+    @staticmethod
+    def _build_quote_token(payload: str) -> str:
+        if not payload:
+            payload = "quote"
+
+        hmac_hex = hmac.new(
+            key=b"quote_web",
+            msg=payload.encode("utf-8"),
+            digestmod=hashlib.sha512,
+        ).hexdigest()
+
+        intermediate = hmac_hex[:10]
+        sha_digest = hashlib.sha256(intermediate.encode("utf-8")).hexdigest()
+        return sha_digest[:10]

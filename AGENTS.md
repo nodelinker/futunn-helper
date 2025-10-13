@@ -10,6 +10,42 @@ This is a **Futunn API Client** library inspired by the architecture of `py-goog
 
 **Reference Architecture:** `ssut/py-googletrans` - Uses `httpx.AsyncClient` with `asyncio` for concurrent HTTP requests.
 
+## Key Features
+
+- Async `httpx.AsyncClient` architecture with full awaitable API surface
+- Built-in concurrency controls for fetching multiple pages in parallel
+- Automatic token acquisition and refresh flow for Futunn endpoints
+  - CSRF token sourced from response cookies
+  - Quote-token generated via HMAC-SHA512/“quote_web” secret + SHA256 truncation
+- Typed dataclass models for stocks, pagination, and responses
+- Custom error hierarchy covering API failures, auth refresh, and rate limiting
+
+## Quick Start (UV-Based Setup)
+
+```bash
+# Clone repository
+git clone https://github.com/yourusername/futunn-helper.git
+cd futunn-helper
+
+# Install UV (if missing) and sync project deps
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv python install 3.11
+uv sync --all-extras --dev
+
+# Run smoke checks
+uv run pytest
+uv run python examples/basic_usage.py
+```
+
+### Minimal Editable Install (pip-compatible)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate    # or .venv\Scripts\activate on Windows
+pip install -e .[dev]
+pytest
+```
+
 ---
 
 ## Architecture Design
@@ -68,18 +104,18 @@ class FutunnClient:
 
 **Required Headers for Futunn API:**
 ```python
-headers = {
-    'futu-x-csrf-token': '<token>',
-    'quote-token': '<token>',
-    'referer': 'https://www.futunn.com/quote/us/stock-list/all-us-stocks/top-turnover',
-    'user-agent': 'Mozilla/5.0 ...'
-}
+Headers are generated per request by the token manager:
+
+- `futu-x-csrf-token` — extracted from the `csrfToken` cookie
+- `quote-token` — computed as `SHA256(HMAC_SHA512(payload or "quote", "quote_web"))[0:10]`
+- `referer` — Futunn stock list page
+- `user-agent` — desktop browser UA string
 ```
 
 **Token Acquisition Strategy:**
-- Implement `TokenManager` class similar to `TokenAcquirer`
-- Fetch tokens by visiting the main page and extracting from cookies/headers
-- Cache tokens and refresh when expired (403/401 responses)
+- `TokenManager` visits the Futunn stock list page to capture the `csrfToken` cookie (cached until invalidated)
+- Each API call signs its params/body using the Futunn web client algorithm (`quote-token` HMAC + SHA256 truncation)
+- Tokens are regenerated automatically on 403 responses or explicit refresh
 
 ### 3. Async Request Handling
 
@@ -187,10 +223,35 @@ GET_INDEX_SPARK_DATA = BASE_URL + "/quote-api/quote-v2/get-index-spark-data"
 
 **constants.py:**
 ```python
-# Market types
-MARKET_TYPE_US = 2
+from dataclasses import dataclass
+
+# Market types (API identifiers)
 MARKET_TYPE_HK = 1
-MARKET_TYPE_CN = 3
+MARKET_TYPE_US = 2
+MARKET_TYPE_CN = 4
+MARKET_TYPE_SG = 15
+MARKET_TYPE_AU = 22
+MARKET_TYPE_JP = 25
+MARKET_TYPE_MY = 27
+MARKET_TYPE_CA = 30
+
+@dataclass(frozen=True)
+class MarketInfo:
+    code: str
+    slug: str
+    name: str
+    market_type: int
+
+MARKETS: dict[str, MarketInfo] = {
+    "US": MarketInfo(code="US", slug="us", name="United States", market_type=MARKET_TYPE_US),
+    # ... remaining markets (HK, CN, SG, AU, JP, MY, CA)
+}
+
+SUPPORTED_MARKET_TYPES = frozenset(info.market_type for info in MARKETS.values())
+
+def resolve_market_type(value: int | str | MarketInfo) -> int:
+    """Accepts numeric IDs, market codes ("US"), slugs ("us"), or MarketInfo objects."""
+    ...
 
 # Plate types
 PLATE_TYPE_ALL = 1
@@ -200,6 +261,8 @@ RANK_TYPE_TOP_TURNOVER = 5
 RANK_TYPE_TOP_GAINERS = 1
 RANK_TYPE_TOP_LOSERS = 2
 ```
+
+**Usage tip:** `MARKETS` provides human-friendly metadata (code, slug, display name, API id) for all eight supported exchanges. Pass either a `MarketInfo`, string code/slug, or raw integer to any client method; `resolve_market_type` normalizes the input before hitting the Futunn API.
 
 ---
 
@@ -324,23 +387,119 @@ asyncio.run(monitor_stocks())
 3. Add docstrings to all public methods
 4. Create API documentation
 
+## Support Resources for Agents
+
+- When you need up-to-date documentation on Futunn APIs, Python packaging, or related tooling, use the Context7 MCP integration (`context7___resolve-library-id` followed by `context7___get-library-docs`) to retrieve the latest references.
+- For quick-start guidance on Python package publishing workflows, query DeepWiki (`deepwiki___ask_question`) to pull concise setup and release instructions.
+
+---
+
+## Development Environment with UV
+
+This project uses **UV** for dependency management and **Trusted Publishing** for secure PyPI releases.
+
+### UV Setup (Quick Start)
+
+```bash
+# Install UV
+curl -LsSf https://astral.sh/uv/install.sh | sh  # macOS/Linux
+# or
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"  # Windows
+
+# Setup development environment
+uv python install 3.11
+uv sync --all-extras --dev
+```
+
+### UV Commands
+
+```bash
+# Run code
+uv run python examples/basic_usage.py
+uv run pytest
+
+# Build package
+uv build
+
+# Publish (with trusted publishing)
+uv publish
+```
+
+### Manual CLI Reference
+
+```bash
+# Tests
+uv run pytest tests/ -v
+uv run pytest --cov=futunn --cov-report=html
+
+# Quality checks
+uv run ruff check futunn/ examples/
+uv run black futunn/ examples/
+uv run mypy futunn/
+
+# Examples
+uv run python examples/basic_usage.py
+uv run python examples/bulk_fetch.py
+
+# Build & validation
+uv build
+uv run twine check dist/*
+```
+
+### Why UV?
+
+- **Fast**: 10-100x faster than pip
+- **Reliable**: Lock file ensures reproducible builds
+- **Simple**: Single tool for everything (venv, deps, build, publish)
+- **Modern**: Built in Rust, designed for modern Python workflows
+
+### Project Configuration (pyproject.toml)
+
+The project uses `pyproject.toml` instead of `setup.py` + `requirements.txt`:
+
+```toml
+[project]
+name = "futunn-helper"
+version = "0.1.0"
+dependencies = ["httpx[http2]>=0.27.0"]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.7.1",
+    "black>=24.0.0"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+```
+
 ---
 
 ## Dependencies
 
 **Required packages:**
 ```
-httpx>=0.27.0        # Async HTTP client with HTTP/2 support
+httpx[http2]>=0.27.0 # Async HTTP client with HTTP/2 support + h2 extras
 asyncio              # Built-in async support
 dataclasses          # Built-in for Python 3.7+
 typing               # Built-in type hints
 ```
 
+**Development packages (installed with uv):**
+```
+pytest>=8.0          # For testing
+pytest-asyncio>=0.23 # For async tests
+ruff>=0.7.1          # Fast linter
+black>=24.0.0        # Code formatter
+mypy>=1.8.0          # Type checker
+```
+
 **Optional packages:**
 ```
 pydantic>=2.0        # For advanced data validation
-pytest>=8.0          # For testing
-pytest-asyncio>=0.23 # For async tests
 aiofiles>=23.0       # For async file I/O
 ```
 
@@ -493,12 +652,105 @@ When working on this project:
 
 ---
 
+## Trusted Publishing to PyPI
+
+This project uses **OpenID Connect (OIDC) Trusted Publishing** for secure, automated releases.
+
+### What is Trusted Publishing?
+
+- Eliminates need for manually managing PyPI API tokens
+- Uses short-lived OIDC tokens from GitHub Actions
+- More secure than long-lived API tokens
+- Automatically configured between GitHub and PyPI
+
+### Setup (One-Time)
+
+**1. Configure PyPI:**
+- Visit: https://pypi.org/manage/project/futunn-helper/settings/publishing/
+- Add trusted publisher:
+  - **Owner**: `yourusername`
+  - **Repository**: `futunn-helper`
+  - **Workflow**: `release.yml`
+  - **Environment**: `pypi`
+
+**2. Create GitHub Environment:**
+- Go to: Repository → Settings → Environments
+- Create environment named `pypi`
+- (Optional) Add protection rules
+
+### Publishing a Release
+
+```bash
+# 1. Update version in pyproject.toml
+# version = "0.2.0"
+
+# 2. Commit and tag
+git add pyproject.toml
+git commit -m "Release v0.2.0"
+git tag v0.2.0
+
+# 3. Push tag
+git push origin main --tags
+
+# 4. GitHub Actions automatically:
+#    - Builds package
+#    - Runs smoke tests
+#    - Publishes to PyPI via OIDC
+```
+
+### Workflow Configuration
+
+The `.github/workflows/release.yml` workflow handles releases:
+
+```yaml
+name: Release to PyPI
+
+on:
+  push:
+    tags:
+      - v*  # Trigger on version tags
+
+jobs:
+  pypi:
+    name: Build and Publish to PyPI
+    runs-on: ubuntu-latest
+
+    environment:
+      name: pypi  # Must match PyPI config
+
+    permissions:
+      id-token: write  # REQUIRED for OIDC
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.11
+      - run: uv build
+      - run: uv publish  # Uses OIDC automatically
+```
+
+### Continuous Integration
+
+The `.github/workflows/ci.yml` runs on every push:
+
+- Tests on Python 3.7-3.12
+- Linting with ruff
+- Formatting checks with black
+- Type checking with mypy
+- Build verification
+
+---
+
 ## References
 
 - **py-googletrans GitHub**: https://github.com/ssut/py-googletrans
 - **httpx Documentation**: https://www.python-httpx.org/
 - **asyncio Documentation**: https://docs.python.org/3/library/asyncio.html
 - **Futunn Website**: https://www.futunn.com/
+- **UV Documentation**: https://docs.astral.sh/uv/
+- **Trusted Publishing**: https://docs.pypi.org/trusted-publishers/
+- **Astral Trusted Publishing Examples**: https://github.com/astral-sh/trusted-publishing-examples
 
 ---
 
@@ -506,12 +758,43 @@ When working on this project:
 
 To start implementing:
 
-1. Read this entire AGENTS.md file
-2. Review py-googletrans architecture on DeepWiki
-3. Create the directory structure above
-4. Start with `futunn/models.py` (data structures)
-5. Then `futunn/token.py` (token management)
-6. Then `futunn/client.py` (main client)
-7. Finally `examples/basic_usage.py` (usage examples)
+1. **Setup Environment**:
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   uv python install 3.11
+   uv sync --all-extras --dev
+   ```
 
-**Remember:** Follow the async patterns from py-googletrans exactly. This architecture has proven to be robust, scalable, and maintainable.
+2. **Review This Guide**:
+   - Key Features & Quick Start sections for workflow expectations
+   - Technical Implementation Guidelines for architectural patterns
+   - Support Resources to know when to use Context7 MCP or DeepWiki
+
+3. **Implementation Order**:
+   - Start with `futunn/models.py` (data structures)
+   - Then `futunn/token.py` (token management)
+   - Then `futunn/client.py` (main client)
+   - Finally `examples/basic_usage.py` (usage examples)
+
+4. **Development Workflow**:
+   ```bash
+   # Make changes
+   uv run ruff check futunn/      # Lint
+   uv run black futunn/           # Format
+   uv run pytest                  # Test
+   uv run python examples/basic_usage.py  # Try it
+   ```
+
+5. **Publishing**:
+   ```bash
+   # Update version in pyproject.toml
+   git tag v0.1.0
+   git push --tags
+   # GitHub Actions handles the rest!
+   ```
+
+**Remember:**
+- Follow the async patterns from py-googletrans exactly
+- Use UV for all dependency management
+- Let trusted publishing handle PyPI releases
+- This architecture has proven to be robust, scalable, and maintainable
