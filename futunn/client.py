@@ -102,7 +102,25 @@ class FutunnClient:
     async def close(self):
         """Close the HTTP client connection"""
         await self.client.aclose()
+        
+        
+    async def get_stock_kline(
+        self,
+        params
+    ) -> StockList:
 
+        data = await self._make_request("https://www.futunn.com/quote-api/quote-v2/get-kline", params=params)
+        return data
+    
+    async def get_stock_min_kline(
+        self,
+        params
+    ) -> StockList:
+
+        data = await self._make_request("https://www.futunn.com/quote-api/quote-v2/get-quote-minute", params=params)
+        return data
+    
+    
     async def get_stock_list(
         self,
         market_type: int | str | constants.MarketInfo = constants.MARKET_TYPE_US,
